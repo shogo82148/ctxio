@@ -22,6 +22,7 @@ func NewReader(reader io.Reader) ReadCloser {
 		setter:   setter,
 		watcher:  watcher,
 		finished: finished,
+		closed:   closed,
 	}
 
 	go func() {
@@ -30,11 +31,16 @@ func NewReader(reader io.Reader) ReadCloser {
 			select {
 			case ctx = <-watcher:
 			case <-closed:
+				return
 			}
 
+			done := ctx.Done()
+		START:
 			select {
-			case <-ctx.Done():
+			case <-done:
 				r.cancel(ctx.Err())
+				done = nil
+				goto START
 			case <-finished:
 			case <-closed:
 				return
