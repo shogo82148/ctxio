@@ -48,8 +48,8 @@ func NewReader(reader io.Reader) ReadCloser {
 type watchReader struct {
 	r        io.Reader
 	setter   readDeadlineSetter
-	watcher  chan context.Context
-	finished chan struct{}
+	watcher  chan<- context.Context
+	finished chan<- struct{}
 	closed   chan struct{}
 
 	mu  sync.Mutex
