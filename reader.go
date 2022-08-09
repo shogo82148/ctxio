@@ -3,6 +3,7 @@ package ctxio
 import (
 	"context"
 	"io"
+	"io/fs"
 	"sync"
 	"time"
 )
@@ -12,7 +13,24 @@ type readDeadlineSetter interface {
 }
 
 func NewReader(reader io.Reader) ReadCloser {
-	setter, _ := reader.(readDeadlineSetter)
+	if setter, ok := reader.(readDeadlineSetter); ok {
+		return newWatchReader(reader, setter)
+	}
+	return newGoReader(reader)
+}
+
+type watchReader struct {
+	r        io.Reader
+	setter   readDeadlineSetter
+	watcher  chan<- context.Context
+	finished chan<- struct{}
+	closed   chan struct{}
+
+	mu  sync.Mutex
+	err error
+}
+
+func newWatchReader(reader io.Reader, setter readDeadlineSetter) ReadCloser {
 	watcher := make(chan context.Context, 1)
 	finished := make(chan struct{})
 	closed := make(chan struct{})
@@ -49,17 +67,6 @@ func NewReader(reader io.Reader) ReadCloser {
 	}()
 
 	return r
-}
-
-type watchReader struct {
-	r        io.Reader
-	setter   readDeadlineSetter
-	watcher  chan<- context.Context
-	finished chan<- struct{}
-	closed   chan struct{}
-
-	mu  sync.Mutex
-	err error
 }
 
 func (r *watchReader) ReadContext(ctx context.Context, data []byte) (n int, err error) {
@@ -128,4 +135,128 @@ func (r *watchReader) canceled() error {
 	err := r.err
 	r.mu.Unlock()
 	return err
+}
+
+type goReader struct {
+	r         io.Reader
+	closed    chan struct{}
+	closeOnce sync.Once
+
+	mu    sync.Mutex
+	buf   []byte
+	start int
+	end   int
+	req   chan readRequest
+	res   chan readResult
+}
+
+type readRequest struct {
+	n int
+}
+
+type readResult struct {
+	buf []byte
+	n   int
+	err error
+}
+
+func newGoReader(reader io.Reader) ReadCloser {
+	r := &goReader{
+		r:      reader,
+		closed: make(chan struct{}),
+		req:    make(chan readRequest),
+		res:    make(chan readResult),
+	}
+	go r.loop()
+	return r
+}
+
+func (r *goReader) ReadContext(ctx context.Context, data []byte) (n int, err error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.start != r.end {
+		// read from buffered data
+		end := r.start + len(data)
+		if end > r.end {
+			end = r.end
+		}
+		copy(data, r.buf[r.start:end])
+		n = end - r.start
+		r.start = end
+		return
+	}
+
+	// send a read request
+	var res readResult
+	select {
+	case r.req <- readRequest{n: len(data)}:
+		select {
+		case res = <-r.res:
+		case <-r.closed:
+			return 0, fs.ErrClosed
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		}
+	case res = <-r.res:
+	case <-r.closed:
+		return 0, fs.ErrClosed
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+
+	end := len(data)
+	if end > res.n {
+		end = res.n
+	}
+	copy(data, res.buf[:end])
+	r.start = end
+	r.end = res.n
+	r.buf = res.buf
+	return end, res.err
+}
+
+func (r *goReader) Close() error {
+	r.closeOnce.Do(func() {
+		close(r.closed)
+	})
+	return nil
+}
+
+func (r *goReader) loop() {
+	buf1 := []byte{}
+	buf2 := []byte{}
+	for {
+		// receive a read request
+		var req readRequest
+		select {
+		case req = <-r.req:
+		case <-r.closed:
+			return
+		}
+
+		// handle the request
+		if cap(buf1) < req.n {
+			buf1 = make([]byte, req.n)
+		}
+		n, err := r.r.Read(buf1[:req.n])
+
+		// send a response
+		res := readResult{
+			buf: buf1[:req.n],
+			n:   n,
+			err: err,
+		}
+		select {
+		case r.res <- res:
+		case <-r.closed:
+			return
+		}
+
+		buf1, buf2 = buf2, buf1
+	}
 }
