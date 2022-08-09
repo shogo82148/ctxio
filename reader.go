@@ -14,7 +14,7 @@ type readDeadlineSetter interface {
 
 func NewReader(reader io.Reader) ReadCloser {
 	if setter, ok := reader.(readDeadlineSetter); ok {
-		if err := setter.SetReadDeadline(time.Time{}); err != nil {
+		if err := setter.SetReadDeadline(time.Time{}); err == nil {
 			return newWatchReader(reader, setter)
 		}
 	}
