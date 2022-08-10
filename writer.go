@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const writeBufferSize = 32 * 1024
+
 type writeDeadlineSetter interface {
 	SetWriteDeadline(t time.Time) error
 }
@@ -134,6 +136,97 @@ func (w *watchWriter) canceled() error {
 	return err
 }
 
+type writeRequest struct {
+	data []byte
+	ch   chan writeResponse
+}
+
+type writeResponse struct {
+	n   int
+	err error
+}
+
+type goWriter struct {
+	w         io.Writer
+	closed    chan struct{}
+	closeOnce sync.Once
+
+	mu   sync.Mutex
+	buf1 []byte
+	buf2 []byte
+	ch   chan writeRequest
+}
+
 func newGoWriter(writer io.Writer) WriteCloser {
+	w := &goWriter{
+		w:      writer,
+		closed: make(chan struct{}),
+		buf1:   make([]byte, writeBufferSize),
+		buf2:   make([]byte, writeBufferSize),
+		ch:     make(chan writeRequest),
+	}
+	go w.loop()
+	return w
+}
+
+func (w *goWriter) WriteContext(ctx context.Context, data []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for n < len(data) {
+		m, err := w.writeContext(ctx, data[n:])
+		n += m
+		if err != nil {
+			return n, err
+		}
+	}
+	return
+}
+
+func (w *goWriter) writeContext(ctx context.Context, data []byte) (n int, err error) {
+	buf := w.buf1
+	w.buf1, w.buf2 = w.buf2, w.buf1
+	ch := make(chan writeResponse, 1)
+	n = copy(buf, data)
+
+	req := writeRequest{
+		data: buf[:n],
+		ch:   ch,
+	}
+	select {
+	case w.ch <- req:
+	case <-ctx.Done():
+		return n, ctx.Err()
+	}
+
+	select {
+	case res := <-ch:
+		return res.n, res.err
+	case <-ctx.Done():
+		return n, ctx.Err()
+	}
+}
+
+func (w *goWriter) Close() error {
+	w.closeOnce.Do(func() {
+		close(w.closed)
+	})
 	return nil
+}
+
+func (w *goWriter) loop() {
+	for {
+		var req writeRequest
+		select {
+		case req = <-w.ch:
+		case <-w.closed:
+			return
+		}
+		n, err := w.w.Write(req.data)
+
+		res := writeResponse{
+			n:   n,
+			err: err,
+		}
+		req.ch <- res
+	}
 }
