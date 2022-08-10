@@ -26,7 +26,9 @@ type watchReader struct {
 	setter   readDeadlineSetter
 	watcher  chan<- context.Context
 	finished chan<- struct{}
-	closed   chan struct{}
+
+	closed    chan struct{}
+	closeOnce sync.Once
 
 	mu  sync.Mutex
 	err error
@@ -88,15 +90,9 @@ func (r *watchReader) ReadContext(ctx context.Context, data []byte) (n int, err 
 }
 
 func (r *watchReader) Close() error {
-	r.mu.Lock()
-	select {
-	case <-r.closed:
-		// r.closed is already closed
-		// nothing to do here
-	default:
+	r.closeOnce.Do(func() {
 		close(r.closed)
-	}
-	r.mu.Unlock()
+	})
 	return nil
 }
 
