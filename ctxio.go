@@ -25,6 +25,28 @@ type WriteCloser interface {
 	io.Closer
 }
 
+// ReaderFrom is the interface that wraps the ReadFromContext method.
+//
+// ReadFromContext reads data from r until EOF or error.
+// The return value n is the number of bytes read.
+// Any error except EOF encountered during the read is also returned.
+//
+// The Copy function uses ReaderFrom if available.
+type ReaderFrom interface {
+	ReadFromContext(ctx context.Context, r Reader) (n int64, err error)
+}
+
+// WriterTo is the interface that wraps the WriteToContext method.
+//
+// WriteToContext writes data to w until there's no more data to write or
+// when an error occurs. The return value n is the number of bytes
+// written. Any error encountered during the write is also returned.
+//
+// The Copy function uses WriterTo if available.
+type WriterTo interface {
+	WriteToContext(ctx context.Context, w Writer) (n int64, err error)
+}
+
 // errInvalidWrite means that a write returned an impossible count.
 var errInvalidWrite = errors.New("invalid write result")
 
@@ -57,6 +79,16 @@ func CopyBuffer(ctx context.Context, dst Writer, src Reader, buf []byte) (writte
 // copyBuffer is the actual implementation of Copy and CopyBuffer.
 // if buf is nil, one is allocated.
 func copyBuffer(ctx context.Context, dst Writer, src Reader, buf []byte) (written int64, err error) {
+	// If the reader has a WriteTo method, use it to do the copy.
+	// Avoids an allocation and a copy.
+	if wt, ok := src.(WriterTo); ok {
+		return wt.WriteToContext(ctx, dst)
+	}
+	// Similarly, if the writer has a ReadFrom method, use it to do the copy.
+	if rt, ok := dst.(ReaderFrom); ok {
+		return rt.ReadFromContext(ctx, src)
+	}
+
 	if buf == nil {
 		size := 32 * 1024
 		buf = make([]byte, size)
