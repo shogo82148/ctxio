@@ -102,3 +102,25 @@ type nopCloser struct {
 }
 
 func (nopCloser) Close() error { return nil }
+
+// ReadAll reads from r until an error or io.EOF and returns the data it read.
+// A successful call returns err == nil, not err == io.EOF. Because ReadAll is
+// defined to read from src until io.EOF, it does not treat an io.EOF from Read
+// as an error to be reported.
+func ReadAll(ctx context.Context, r Reader) ([]byte, error) {
+	b := make([]byte, 0, 512)
+	for {
+		if len(b) == cap(b) {
+			// Add more capacity (let append pick how much).
+			b = append(b, 0)[:len(b)]
+		}
+		n, err := r.ReadContext(ctx, b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return b, err
+		}
+	}
+}
