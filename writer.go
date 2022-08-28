@@ -13,7 +13,21 @@ type writeDeadlineSetter interface {
 	SetWriteDeadline(t time.Time) error
 }
 
+type writeCloser struct {
+	Writer
+}
+
+func (w writeCloser) Close() error {
+	if c, ok := w.Writer.(io.Closer); ok {
+		_ = c.Close()
+	}
+	return nil
+}
+
 func NewWriter(writer io.Writer) WriteCloser {
+	if writer, ok := writer.(Writer); ok {
+		return writeCloser{writer}
+	}
 	if setter, ok := writer.(writeDeadlineSetter); ok {
 		if err := setter.SetWriteDeadline(time.Time{}); err == nil {
 			return newWatchWriter(writer, setter)
