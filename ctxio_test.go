@@ -47,3 +47,15 @@ func TestCopyBufferNil(t *testing.T) {
 		t.Errorf("CopyBuffer did not work properly")
 	}
 }
+
+func TestReadAll(t *testing.T) {
+	rb := new(Buffer)
+	rb.WriteString("hello, world.")
+	data, err := ReadAll(context.Background(), rb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello, world." {
+		t.Errorf("ReadAll did not work properly")
+	}
+}
