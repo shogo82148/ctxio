@@ -79,12 +79,12 @@ func CopyBuffer(ctx context.Context, dst Writer, src Reader, buf []byte) (writte
 // copyBuffer is the actual implementation of Copy and CopyBuffer.
 // if buf is nil, one is allocated.
 func copyBuffer(ctx context.Context, dst Writer, src Reader, buf []byte) (written int64, err error) {
-	// If the reader has a WriteTo method, use it to do the copy.
+	// If the reader has a WriteToContext method, use it to do the copy.
 	// Avoids an allocation and a copy.
 	if wt, ok := src.(WriterTo); ok {
 		return wt.WriteToContext(ctx, dst)
 	}
-	// Similarly, if the writer has a ReadFrom method, use it to do the copy.
+	// Similarly, if the writer has a ReadFromContext method, use it to do the copy.
 	if rt, ok := dst.(ReaderFrom); ok {
 		return rt.ReadFromContext(ctx, src)
 	}
