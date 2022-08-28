@@ -90,3 +90,15 @@ func copyBuffer(ctx context.Context, dst Writer, src Reader, buf []byte) (writte
 	}
 	return written, err
 }
+
+// NopCloser returns a ReadCloser with a no-op Close method wrapping
+// the provided Reader r.
+func NopCloser(r Reader) ReadCloser {
+	return nopCloser{r}
+}
+
+type nopCloser struct {
+	Reader
+}
+
+func (nopCloser) Close() error { return nil }
