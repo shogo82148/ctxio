@@ -2,6 +2,7 @@ package ctxio
 
 import (
 	"context"
+	"io"
 	"testing"
 )
 
@@ -31,4 +32,46 @@ func TestPipe1(t *testing.T) {
 	<-c
 	r.Close()
 	w.Close()
+}
+
+func reader(t *testing.T, r Reader, c chan int) {
+	var buf = make([]byte, 64)
+	for {
+		n, err := r.ReadContext(context.Background(), buf)
+		if err == io.EOF {
+			c <- 0
+			break
+		}
+		if err != nil {
+			t.Errorf("read: %v", err)
+		}
+		c <- n
+	}
+}
+
+// Test a sequence of read/write pairs.
+func TestPipe2(t *testing.T) {
+	c := make(chan int)
+	r, w := Pipe()
+	go reader(t, r, c)
+	var buf = make([]byte, 64)
+	for i := 0; i < 5; i++ {
+		p := buf[0 : 5+i*10]
+		n, err := w.WriteContext(context.Background(), p)
+		if n != len(p) {
+			t.Errorf("wrote %d, got %d", len(p), n)
+		}
+		if err != nil {
+			t.Errorf("write: %v", err)
+		}
+		nn := <-c
+		if nn != n {
+			t.Errorf("wrote %d, read got %d", n, nn)
+		}
+	}
+	w.Close()
+	nn := <-c
+	if nn != 0 {
+		t.Errorf("final read got %d", nn)
+	}
 }
