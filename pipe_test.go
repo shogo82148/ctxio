@@ -255,3 +255,14 @@ func TestPipeWriteClose2(t *testing.T) {
 		t.Errorf("write to closed pipe: %v, %v want %v, %v", n, err, 0, io.ErrClosedPipe)
 	}
 }
+
+func TestWriteNil(t *testing.T) {
+	r, w := Pipe()
+	go func() {
+		w.WriteContext(context.Background(), nil)
+		w.Close()
+	}()
+	var b [2]byte
+	ReadFull(context.Background(), r, b[0:2])
+	r.Close()
+}
