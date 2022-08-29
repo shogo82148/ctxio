@@ -266,3 +266,60 @@ func TestWriteNil(t *testing.T) {
 	ReadFull(context.Background(), r, b[0:2])
 	r.Close()
 }
+
+func TestWriteAfterWriterClose(t *testing.T) {
+	r, w := Pipe()
+
+	done := make(chan bool)
+	var writeErr error
+	go func() {
+		_, err := w.WriteContext(context.Background(), []byte("hello"))
+		if err != nil {
+			t.Errorf("got error: %q; expected none", err)
+		}
+		w.Close()
+		_, writeErr = w.WriteContext(context.Background(), []byte("world"))
+		done <- true
+	}()
+
+	buf := make([]byte, 100)
+	var result string
+	n, err := ReadFull(context.Background(), r, buf)
+	if err != nil && err != io.ErrUnexpectedEOF {
+		t.Fatalf("got: %q; want: %q", err, io.ErrUnexpectedEOF)
+	}
+	result = string(buf[0:n])
+	<-done
+
+	if result != "hello" {
+		t.Errorf("got: %q; want: %q", result, "hello")
+	}
+	if writeErr != io.ErrClosedPipe {
+		t.Errorf("got: %q; want: %q", writeErr, io.ErrClosedPipe)
+	}
+}
+
+func TestPipeCloseError(t *testing.T) {
+	type testError1 struct{ error }
+	type testError2 struct{ error }
+
+	r, w := Pipe()
+	r.CloseWithError(testError1{})
+	if _, err := w.WriteContext(context.Background(), nil); err != (testError1{}) {
+		t.Errorf("Write error: got %T, want testError1", err)
+	}
+	r.CloseWithError(testError2{})
+	if _, err := w.WriteContext(context.Background(), nil); err != (testError1{}) {
+		t.Errorf("Write error: got %T, want testError1", err)
+	}
+
+	r, w = Pipe()
+	w.CloseWithError(testError1{})
+	if _, err := r.ReadContext(context.Background(), nil); err != (testError1{}) {
+		t.Errorf("Read error: got %T, want testError1", err)
+	}
+	w.CloseWithError(testError2{})
+	if _, err := r.ReadContext(context.Background(), nil); err != (testError1{}) {
+		t.Errorf("Read error: got %T, want testError1", err)
+	}
+}
