@@ -75,3 +75,60 @@ func TestPipe2(t *testing.T) {
 		t.Errorf("final read got %d", nn)
 	}
 }
+
+type pipeReturn struct {
+	n   int
+	err error
+}
+
+// Test a large write that requires multiple reads to satisfy.
+func writer(w WriteCloser, buf []byte, c chan pipeReturn) {
+	n, err := w.WriteContext(context.Background(), buf)
+	w.Close()
+	c <- pipeReturn{n, err}
+}
+
+func TestPipe3(t *testing.T) {
+	c := make(chan pipeReturn)
+	r, w := Pipe()
+	var wdat = make([]byte, 128)
+	for i := 0; i < len(wdat); i++ {
+		wdat[i] = byte(i)
+	}
+	go writer(w, wdat, c)
+	var rdat = make([]byte, 1024)
+	tot := 0
+	for n := 1; n <= 256; n *= 2 {
+		nn, err := r.ReadContext(context.Background(), rdat[tot:tot+n])
+		if err != nil && err != io.EOF {
+			t.Fatalf("read: %v", err)
+		}
+
+		// only final two reads should be short - 1 byte, then 0
+		expect := n
+		if n == 128 {
+			expect = 1
+		} else if n == 256 {
+			expect = 0
+			if err != io.EOF {
+				t.Fatalf("read at end: %v", err)
+			}
+		}
+		if nn != expect {
+			t.Fatalf("read %d, expected %d, got %d", n, expect, nn)
+		}
+		tot += nn
+	}
+	pr := <-c
+	if pr.n != 128 || pr.err != nil {
+		t.Fatalf("write 128: %d, %v", pr.n, pr.err)
+	}
+	if tot != 128 {
+		t.Fatalf("total read %d != 128", tot)
+	}
+	for i := 0; i < 128; i++ {
+		if rdat[i] != byte(i) {
+			t.Fatalf("rdat[%d] = %d", i, rdat[i])
+		}
+	}
+}
