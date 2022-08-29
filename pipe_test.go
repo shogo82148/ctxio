@@ -214,3 +214,44 @@ func TestPipeReadClose2(t *testing.T) {
 		t.Errorf("read from closed pipe: %v, %v want %v, %v", n, err, 0, io.ErrClosedPipe)
 	}
 }
+
+// Test write after/before reader close.
+
+func TestPipeWriteClose(t *testing.T) {
+	for _, tt := range pipeTests {
+		c := make(chan int, 1)
+		r, w := Pipe()
+		if tt.async {
+			go delayClose(t, r, c, tt)
+		} else {
+			delayClose(t, r, c, tt)
+		}
+		n, err := WriteStringContext(context.Background(), w, "hello, world")
+		<-c
+		expect := tt.err
+		if expect == nil {
+			expect = io.ErrClosedPipe
+		}
+		if err != expect {
+			t.Errorf("write on closed pipe: %v want %v", err, expect)
+		}
+		if n != 0 {
+			t.Errorf("write on closed pipe returned %d", n)
+		}
+		if err = w.Close(); err != nil {
+			t.Errorf("w.Close: %v", err)
+		}
+	}
+}
+
+// Test close on Write side during Write.
+func TestPipeWriteClose2(t *testing.T) {
+	c := make(chan int, 1)
+	_, w := Pipe()
+	go delayClose(t, w, c, pipeTest{})
+	n, err := w.WriteContext(context.Background(), make([]byte, 64))
+	<-c
+	if n != 0 || err != io.ErrClosedPipe {
+		t.Errorf("write to closed pipe: %v, %v want %v, %v", n, err, 0, io.ErrClosedPipe)
+	}
+}

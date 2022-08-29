@@ -91,6 +91,18 @@ func copyBuffer(ctx context.Context, dst Writer, src Reader, buf []byte) (writte
 	return written, err
 }
 
+// StringWriter is the interface that wraps the WriteStringContext method.
+type StringWriter interface {
+	WriteStringContext(ctx context.Context, s string) (n int, err error)
+}
+
+func WriteStringContext(ctx context.Context, w Writer, s string) (n int, err error) {
+	if sw, ok := w.(StringWriter); ok {
+		return sw.WriteStringContext(ctx, s)
+	}
+	return w.WriteContext(ctx, []byte(s))
+}
+
 // NopCloser returns a ReadCloser with a no-op Close method wrapping
 // the provided Reader r.
 func NopCloser(r Reader) ReadCloser {
