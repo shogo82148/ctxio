@@ -1,9 +1,12 @@
 package ctxio
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 )
@@ -322,4 +325,85 @@ func TestPipeCloseError(t *testing.T) {
 	if _, err := r.ReadContext(context.Background(), nil); err != (testError1{}) {
 		t.Errorf("Read error: got %T, want testError1", err)
 	}
+}
+
+func TestPipeConcurrent(t *testing.T) {
+	const (
+		input    = "0123456789abcdef"
+		count    = 8
+		readSize = 2
+	)
+
+	t.Run("Write", func(t *testing.T) {
+		r, w := Pipe()
+
+		for i := 0; i < count; i++ {
+			go func() {
+				time.Sleep(time.Millisecond) // Increase probability of race
+				if n, err := w.WriteContext(context.Background(), []byte(input)); n != len(input) || err != nil {
+					t.Errorf("Write() = (%d, %v); want (%d, nil)", n, err, len(input))
+				}
+			}()
+		}
+
+		buf := make([]byte, count*len(input))
+		for i := 0; i < len(buf); i += readSize {
+			if n, err := r.ReadContext(context.Background(), buf[i:i+readSize]); n != readSize || err != nil {
+				t.Errorf("Read() = (%d, %v); want (%d, nil)", n, err, readSize)
+			}
+		}
+
+		// Since each Write is fully gated, if multiple Read calls were needed,
+		// the contents of Write should still appear together in the output.
+		got := string(buf)
+		want := strings.Repeat(input, count)
+		if got != want {
+			t.Errorf("got: %q; want: %q", got, want)
+		}
+	})
+
+	t.Run("Read", func(t *testing.T) {
+		r, w := Pipe()
+
+		c := make(chan []byte, count*len(input)/readSize)
+		for i := 0; i < cap(c); i++ {
+			go func() {
+				time.Sleep(time.Millisecond) // Increase probability of race
+				buf := make([]byte, readSize)
+				if n, err := r.ReadContext(context.Background(), buf); n != readSize || err != nil {
+					t.Errorf("Read() = (%d, %v); want (%d, nil)", n, err, readSize)
+				}
+				c <- buf
+			}()
+		}
+
+		for i := 0; i < count; i++ {
+			if n, err := w.WriteContext(context.Background(), []byte(input)); n != len(input) || err != nil {
+				t.Errorf("Write() = (%d, %v); want (%d, nil)", n, err, len(input))
+			}
+		}
+
+		// Since each read is independent, the only guarantee about the output
+		// is that it is a permutation of the input in readSized groups.
+		got := make([]byte, 0, count*len(input))
+		for i := 0; i < cap(c); i++ {
+			got = append(got, (<-c)...)
+		}
+		got = sortBytesInGroups(got, readSize)
+		want := bytes.Repeat([]byte(input), count)
+		want = sortBytesInGroups(want, readSize)
+		if string(got) != string(want) {
+			t.Errorf("got: %q; want: %q", got, want)
+		}
+	})
+}
+
+func sortBytesInGroups(b []byte, n int) []byte {
+	var groups [][]byte
+	for len(b) > 0 {
+		groups = append(groups, b[:n])
+		b = b[n:]
+	}
+	sort.Slice(groups, func(i, j int) bool { return bytes.Compare(groups[i], groups[j]) < 0 })
+	return bytes.Join(groups, nil)
 }
