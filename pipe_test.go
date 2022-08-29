@@ -2,8 +2,10 @@ package ctxio
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"testing"
+	"time"
 )
 
 func checkWrite(t *testing.T, w Writer, data []byte, c chan int) {
@@ -130,5 +132,85 @@ func TestPipe3(t *testing.T) {
 		if rdat[i] != byte(i) {
 			t.Fatalf("rdat[%d] = %d", i, rdat[i])
 		}
+	}
+}
+
+// Test read after/before writer close.
+
+type closer interface {
+	CloseWithError(error) error
+	Close() error
+}
+
+type pipeTest struct {
+	async          bool
+	err            error
+	closeWithError bool
+}
+
+func (p pipeTest) String() string {
+	return fmt.Sprintf("async=%v err=%v closeWithError=%v", p.async, p.err, p.closeWithError)
+}
+
+var pipeTests = []pipeTest{
+	{true, nil, false},
+	{true, nil, true},
+	{true, io.ErrShortWrite, true},
+	{false, nil, false},
+	{false, nil, true},
+	{false, io.ErrShortWrite, true},
+}
+
+func delayClose(t *testing.T, cl closer, ch chan int, tt pipeTest) {
+	time.Sleep(1 * time.Millisecond)
+	var err error
+	if tt.closeWithError {
+		err = cl.CloseWithError(tt.err)
+	} else {
+		err = cl.Close()
+	}
+	if err != nil {
+		t.Errorf("delayClose: %v", err)
+	}
+	ch <- 0
+}
+
+func TestPipeReadClose(t *testing.T) {
+	for _, tt := range pipeTests {
+		c := make(chan int, 1)
+		r, w := Pipe()
+		if tt.async {
+			go delayClose(t, w, c, tt)
+		} else {
+			delayClose(t, w, c, tt)
+		}
+		var buf = make([]byte, 64)
+		n, err := r.ReadContext(context.Background(), buf)
+		<-c
+		want := tt.err
+		if want == nil {
+			want = io.EOF
+		}
+		if err != want {
+			t.Errorf("read from closed pipe: %v want %v", err, want)
+		}
+		if n != 0 {
+			t.Errorf("read on closed pipe returned %d", n)
+		}
+		if err = r.Close(); err != nil {
+			t.Errorf("r.Close: %v", err)
+		}
+	}
+}
+
+// Test close on Read side during Read.
+func TestPipeReadClose2(t *testing.T) {
+	c := make(chan int, 1)
+	r, _ := Pipe()
+	go delayClose(t, r, c, pipeTest{})
+	n, err := r.ReadContext(context.Background(), make([]byte, 64))
+	<-c
+	if n != 0 || err != io.ErrClosedPipe {
+		t.Errorf("read from closed pipe: %v, %v want %v, %v", n, err, 0, io.ErrClosedPipe)
 	}
 }
