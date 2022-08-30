@@ -32,6 +32,29 @@ var errInvalidWrite = errors.New("invalid write result")
 // immediate cancellation of network operations.
 var aLongTimeAgo = time.Unix(1, 0)
 
+// ReadAtLeast reads from r into buf until it has read at least min bytes.
+func ReadAtLeast(ctx context.Context, r Reader, buf []byte, min int) (n int, err error) {
+	if len(buf) < min {
+		return 0, io.ErrShortBuffer
+	}
+	for n < min && err == nil {
+		var nn int
+		nn, err = r.ReadContext(ctx, buf[n:])
+		n += nn
+	}
+	if n >= min {
+		err = nil
+	} else if n > 0 && err == io.EOF {
+		err = io.ErrUnexpectedEOF
+	}
+	return
+}
+
+// ReadFull reads exactly len(buf) bytes from r into buf.
+func ReadFull(ctx context.Context, r Reader, buf []byte) (n int, err error) {
+	return ReadAtLeast(ctx, r, buf, len(buf))
+}
+
 // Copy copies from src to dst until either EOF is reached
 // on src or an error occurs. It returns the number of bytes
 // copied and the first error encountered while copying, if any.
@@ -89,6 +112,18 @@ func copyBuffer(ctx context.Context, dst Writer, src Reader, buf []byte) (writte
 		}
 	}
 	return written, err
+}
+
+// StringWriter is the interface that wraps the WriteStringContext method.
+type StringWriter interface {
+	WriteStringContext(ctx context.Context, s string) (n int, err error)
+}
+
+func WriteStringContext(ctx context.Context, w Writer, s string) (n int, err error) {
+	if sw, ok := w.(StringWriter); ok {
+		return sw.WriteStringContext(ctx, s)
+	}
+	return w.WriteContext(ctx, []byte(s))
 }
 
 // NopCloser returns a ReadCloser with a no-op Close method wrapping
