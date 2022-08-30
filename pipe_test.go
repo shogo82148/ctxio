@@ -3,6 +3,7 @@ package ctxio
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -406,4 +407,27 @@ func sortBytesInGroups(b []byte, n int) []byte {
 	}
 	sort.Slice(groups, func(i, j int) bool { return bytes.Compare(groups[i], groups[j]) < 0 })
 	return bytes.Join(groups, nil)
+}
+
+func TestPipeContext(t *testing.T) {
+	r, w := Pipe()
+	var ctx context.Context
+	var cancel context.CancelFunc
+
+	// read timeout
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := r.ReadContext(ctx, make([]byte, 16)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("want context.DeadlineExceeded, got %v", err)
+	}
+
+	// write timeout
+	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := w.WriteContext(ctx, make([]byte, 16)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("want context.DeadlineExceeded, got %v", err)
+	}
+
+	w.Close()
+	r.Close()
 }

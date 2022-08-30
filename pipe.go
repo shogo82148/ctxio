@@ -45,10 +45,18 @@ func (p *pipe) read(ctx context.Context, b []byte) (int, error) {
 	}
 
 	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
+	select {
 	case bw := <-p.wrCh:
 		nr := copy(b, bw)
 		p.rdCh <- nr
 		return nr, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
 	case <-p.done:
 		return 0, p.readCloseError()
 	}
@@ -72,12 +80,20 @@ func (p *pipe) write(ctx context.Context, b []byte) (n int, err error) {
 		defer p.wrMu.Unlock()
 	}
 
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	default:
+	}
+
 	for once := true; once || len(b) > 0; once = false {
 		select {
 		case p.wrCh <- b:
 			nw := <-p.rdCh
 			b = b[nw:]
 			n += nw
+		case <-ctx.Done():
+			return 0, ctx.Err()
 		case <-p.done:
 			return n, p.writeCloseError()
 		}
