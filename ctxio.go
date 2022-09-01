@@ -27,7 +27,7 @@ type WriteCloser interface {
 
 // ReaderFrom is the interface that wraps the ReadFromContext method.
 //
-// ReadFrom reads data from r until EOF or error.
+// ReadFromContext reads data from r until EOF or error.
 // The return value n is the number of bytes read.
 // Any error except EOF encountered during the read is also returned.
 //
@@ -38,7 +38,7 @@ type ReaderFrom interface {
 
 // WriterTo is the interface that wraps the WriteToContext method.
 //
-// WriteTo writes data to w until there's no more data to write or
+// WriteToContext writes data to w until there's no more data to write or
 // when an error occurs. The return value n is the number of bytes
 // written. Any error encountered during the write is also returned.
 //
