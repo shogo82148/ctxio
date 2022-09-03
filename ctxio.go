@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"time"
 )
 
@@ -33,7 +34,7 @@ type WriteCloser interface {
 //
 // The Copy function uses ReaderFrom if available.
 type ReaderFrom interface {
-	ReadFromContext(r Reader) (n int64, err error)
+	ReadFromContext(ctx context.Context, r Reader) (n int64, err error)
 }
 
 // WriterTo is the interface that wraps the WriteToContext method.
@@ -44,7 +45,7 @@ type ReaderFrom interface {
 //
 // The Copy function uses WriterTo if available.
 type WriterTo interface {
-	WriteToContext(w Writer) (n int64, err error)
+	WriteToContext(ctx context.Context, w Writer) (n int64, err error)
 }
 
 // errInvalidWrite means that a write returned an impossible count.
@@ -105,11 +106,11 @@ func copyBuffer(ctx context.Context, dst Writer, src Reader, buf []byte) (writte
 	// If the reader has a WriteToContext method, use it to do the copy.
 	// Avoids an allocation and a copy.
 	if wt, ok := src.(WriterTo); ok {
-		return wt.WriteToContext(dst)
+		return wt.WriteToContext(ctx, dst)
 	}
 	// Similarly, if the writer has a ReadFromContext method, use it to do the copy.
 	if rt, ok := dst.(ReaderFrom); ok {
-		return rt.ReadFromContext(src)
+		return rt.ReadFromContext(ctx, src)
 	}
 
 	if buf == nil {
@@ -158,9 +159,53 @@ func WriteStringContext(ctx context.Context, w Writer, s string) (n int, err err
 	return w.WriteContext(ctx, []byte(s))
 }
 
+// Discard is a Writer on which all Write calls succeed
+// without doing anything.
+var Discard Writer = discard{}
+
+type discard struct{}
+
+// discard implements ReaderFrom as an optimization so Copy to
+// ctxio.Discard can avoid doing unnecessary work.
+var _ ReaderFrom = discard{}
+
+func (discard) WriteContext(ctx context.Context, p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (discard) WriteStringContext(ctx context.Context, s string) (int, error) {
+	return len(s), nil
+}
+
+var blackHolePool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 8192)
+		return &b
+	},
+}
+
+func (discard) ReadFromContext(ctx context.Context, r Reader) (n int64, err error) {
+	bufp := blackHolePool.Get().(*[]byte)
+	readSize := 0
+	for {
+		readSize, err = r.ReadContext(ctx, *bufp)
+		n += int64(readSize)
+		if err != nil {
+			blackHolePool.Put(bufp)
+			if err == io.EOF {
+				return n, nil
+			}
+			return
+		}
+	}
+}
+
 // NopCloser returns a ReadCloser with a no-op Close method wrapping
 // the provided Reader r.
 func NopCloser(r Reader) ReadCloser {
+	if _, ok := r.(WriterTo); ok {
+		return nopCloserWriterTo{r}
+	}
 	return nopCloser{r}
 }
 
@@ -169,6 +214,16 @@ type nopCloser struct {
 }
 
 func (nopCloser) Close() error { return nil }
+
+type nopCloserWriterTo struct {
+	Reader
+}
+
+func (nopCloserWriterTo) Close() error { return nil }
+
+func (c nopCloserWriterTo) WriteToContext(ctx context.Context, w Writer) (n int64, err error) {
+	return c.Reader.(WriterTo).WriteToContext(ctx, w)
+}
 
 // ReadAll reads from r until an error or io.EOF and returns the data it read.
 // A successful call returns err == nil, not err == io.EOF. Because ReadAll is
