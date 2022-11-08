@@ -1,8 +1,11 @@
 package ctxio
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"io"
+	"strings"
 	"sync"
 	"time"
 )
@@ -25,8 +28,17 @@ func (w writeCloser) Close() error {
 }
 
 func NewWriter(writer io.Writer) WriteCloser {
-	if writer, ok := writer.(Writer); ok {
-		return writeCloser{writer}
+	switch w := writer.(type) {
+	case bufio.ReadWriter:
+		return &nopWriter{w}
+	case *bufio.Writer:
+		return &nopWriter{w}
+	case *bytes.Buffer:
+		return &nopWriter{w}
+	case *strings.Builder:
+		return &nopWriter{w}
+	case Writer:
+		return writeCloser{w}
 	}
 	if setter, ok := writer.(writeDeadlineSetter); ok {
 		if err := setter.SetWriteDeadline(time.Time{}); err == nil {
@@ -243,4 +255,16 @@ func (w *goWriter) loop() {
 		}
 		req.ch <- res
 	}
+}
+
+type nopWriter struct {
+	io.Writer
+}
+
+func (w *nopWriter) WriteContext(ctx context.Context, data []byte) (int, error) {
+	return w.Write(data)
+}
+
+func (w *nopWriter) Close() error {
+	return nil
 }

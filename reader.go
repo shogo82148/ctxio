@@ -1,9 +1,12 @@
 package ctxio
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"io/fs"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,9 +16,21 @@ type readDeadlineSetter interface {
 }
 
 func NewReader(reader io.Reader) ReadCloser {
-	if reader, ok := reader.(Reader); ok {
-		return NopCloser(reader)
+	switch r := reader.(type) {
+	case *bufio.ReadWriter:
+		return &nopReader{r}
+	case *bufio.Reader:
+		return &nopReader{r}
+	case *bytes.Reader:
+		return &nopReader{r}
+	case *bytes.Buffer:
+		return &nopReader{r}
+	case *strings.Reader:
+		return &nopReader{r}
+	case Reader:
+		return NopCloser(r)
 	}
+
 	if setter, ok := reader.(readDeadlineSetter); ok {
 		if err := setter.SetReadDeadline(time.Time{}); err == nil {
 			return newWatchReader(reader, setter)
@@ -260,4 +275,16 @@ func (r *goReader) loop() {
 
 		buf1, buf2 = buf2, buf1
 	}
+}
+
+type nopReader struct {
+	io.Reader
+}
+
+func (r *nopReader) ReadContext(ctx context.Context, data []byte) (int, error) {
+	return r.Read(data)
+}
+
+func (r *nopReader) Close() error {
+	return nil
 }
