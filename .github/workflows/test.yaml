@@ -19,9 +19,9 @@ jobs:
           - windows-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v3.7.0
       - name: Setup Go ${{ matrix.go }}
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v3.6.1
         with:
           go-version: ${{ matrix.go }}
           cache: true
@@ -29,7 +29,7 @@ jobs:
       - name: test
         run: |
           go test -v -coverprofile=profile.cov ./...
-      - uses: shogo82148/actions-goveralls@v1
+      - uses: shogo82148/actions-goveralls@v1.11.5
         with:
           path-to-profile: profile.cov
           flag-name: OS-${{ matrix.os }}-Go-${{ matrix.go }}
@@ -40,6 +40,6 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: shogo82148/actions-goveralls@v1
+      - uses: shogo82148/actions-goveralls@v1.11.5
         with:
           parallel-finished: true
